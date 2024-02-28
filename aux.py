@@ -20,7 +20,7 @@ def find_new_objs(param, track_mask, seg_mask, curr_idx):
             obj_num += 1
     return seg_obj_mask
 
-def merge_pt(param, track_mask, seg_mask):
+def merge_st(param, track_mask, seg_mask):
     """
     track_mask: a 2D mask map
     seg_mask: same type
