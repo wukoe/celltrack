@@ -7,10 +7,14 @@ from wbtool import file_misc as fm
 from onevision import improc,morph_proc
 from aot_tracker import _palette
 
+
 def value_modify(vid):
     if vid.dtype in ['uint16', '>u2']:
         vid = improc.value_uint16_to_uint8(vid)
-    if len(vid.shape) == 2:
+    return vid
+
+def ch_num_modify(vid):
+    if len(vid[0].shape) == 2:
         D = []
         for it in vid:
             D.append(improc.channel_1to3(it))
