@@ -27,6 +27,8 @@ def filter_mask_by_size(masks, lb, hb):
     ----
     input
     masks: 3D numpy array or list of 2D arrays.
+    return
+    I: index of masks to keep, use it by masks[I]
     """
     sz = masks[0].shape
     imga = np.prod(sz)
@@ -35,7 +37,7 @@ def filter_mask_by_size(masks, lb, hb):
     ma = ims.sum(2).sum(1)
     mar = ma/imga
     I = np.bitwise_and(mar<hb, mar>lb)
-    return ims[I]
+    return np.arange(len(I))[I]
     
     # ta = np.prod(track_mask.shape)
     # thres = int(ta * param['min_keep_area_ratio'])
@@ -52,7 +54,7 @@ def read_coords_from_csv(csv):
     cellid = []
     frame_coord = []
     for it in group_obj:
-        cellid.append(it[0])        
+        cellid.append(it[1]['Track'].to_numpy())        
         frame_coord.append(it[1][['X','Y']].to_numpy())
     return cellid,frame_coord
 
@@ -124,5 +126,9 @@ def draw_mask(img, mask, alpha=0.5, id_countour=False):
     return img_mask.astype(img.dtype)
 
 if __name__ == "__main__":
-    folder_path = '/home/wb/samba_dir/cells_brightfield/leading-HELA-entirespan/A1ROI2_02_1_1_Bright Field'
-    takein_folder_image(folder_path)
+    # folder_path = '/home/wb/samba_dir/cells_brightfield/leading-HELA-entirespan/A1ROI2_02_1_1_Bright Field'
+    # takein_folder_image(folder_path)
+
+    img_path = '/home/wb/samba_dir/cells_brightfield/single-cell-movement-for-machine-learning/A549/0/A4ROI3.tif'
+    imgs = fm.imgtiff_read(img_path)
+    np.save(img_path.rsplit('.')[0], imgs)
