@@ -7,20 +7,23 @@ import proc_data
 from wbtool.show import wshow
 
 
-def isolate_filter_object(imobj, segtracker_args):
+def isolate_filter_object(imobj, segtracker_args, keep_one=True):
     # isolate, then filter small object, with reset new generated ids
     # input: IMbind obj
+    # keep_one: True if want to only keep the largest isolated part of a separated object.
     idmax = max(imobj.get_ids())
-    imobj = ovmorph.isolate_object(imobj, True)
+    imobj = ovmorph.isolate_object(imobj, True, keep_one=keep_one)
     imobj = ovmorph.filter_object_size(imobj, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
-    # 对于新增加物体，将ID重整成连续分布
-    ids = np.array(imobj.get_ids())
-    if max(ids) > idmax:  #若确实发生了id数量增加
-        id_groups = [ids[ids<=idmax], ids[ids>idmax]]
-        if max(ids) > (idmax + len(id_groups[1])):  #若确实出现不连续分布的情况 (这里要用idmax而非id_groups[0].max()，因为id_groups[0]中最后的obj可能也被删了，不能因此占用原来的id)
-            for it in id_groups[1]:
-                idmax += 1
-                imobj.mod_id(it, idmax)
+
+    if not keep_one:
+        # 对于新增加物体，将ID重整成连续分布
+        ids = np.array(imobj.get_ids())
+        if max(ids) > idmax:  #若确实发生了id数量增加
+            id_groups = [ids[ids<=idmax], ids[ids>idmax]]
+            if max(ids) > (idmax + len(id_groups[1])):  #若确实出现不连续分布的情况 (这里要用idmax而非id_groups[0].max()，因为id_groups[0]中最后的obj可能也在上面的过滤中被删了，不能因此占用原来的id)
+                for it in id_groups[1]:
+                    idmax += 1
+                    imobj.mod_id(it, idmax)
     return imobj
 
 def do_segment(SA, segtracker_args, vid, ids, coords):
@@ -33,12 +36,13 @@ def do_segment(SA, segtracker_args, vid, ids, coords):
         frame = vid[frame_idx]
         
         ms = SA.infer(frame, point_prompt)
-        I = proc_data.filter_mask_by_size(ms, 0, segtracker_args['max_obj_area_ratio']) #segtracker_args['min_obj_area_ratio']
-        ms = ms[I]
-        frame_idt = ids[frame_idx][I]
-        # ms = morph_proc.masks_to_map(ms, ids=frame_idt)
+        frame_idt = ids[frame_idx]
+        # 以下的部分可能不需要。
+        # I = proc_data.filter_mask_by_size(ms, 0, segtracker_args['max_obj_area_ratio']) #segtracker_args['min_obj_area_ratio']
+        # ms = ms[I]
+        # frame_idt = frame_idt[I]
         ms = ovmorph.IMbind(ms, 'masks', ids=frame_idt)
-        pred_mask = isolate_filter_object(ms, segtracker_args)        
+        pred_mask = isolate_filter_object(ms, segtracker_args, True)        
 
         seg_list.append(pred_mask)
         print("segment for frame {}".format(frame_idx), end='\r')
@@ -72,7 +76,51 @@ def merge_st(param, track_mask, seg_mask):
     """
     seg_obj_ids = seg_mask.get_ids()
     seg_obj_area = ovmorph.count_obj_area(seg_mask)
+    
+    track_obj_ids = track_mask.get_ids()
+    track_obj_area = ovmorph.count_obj_area(track_mask)
+    
+    new_track_mask = copy.deepcopy(track_mask)
+    obj_num = max(track_obj_ids)
+    # print(track_obj_ids)
+    for nid in seg_obj_ids:  #通过idx 定位每个新的物体
+        # overlapping status of seg[nid] with all track objs.
+        intersect_mask = [seg_mask[nid] & track_mask[it] for it in track_mask] 
+        intersect_area = np.array([np.sum(it) for it in intersect_mask])
+        iou_track = intersect_area / np.array(list(track_obj_area.values())) #[track_obj_area[k] for k in list(track_obj_area.keys()).sort()])
+        # need to find index in this for nid of track obj.
+        idx = np.argmax(iou_track)
+        tid = track_mask.ids[idx]
+        
+        if nid in track_obj_ids:
+            if tid != nid:
+                print('most overlap not {} but {}'.format(nid, tid))
+            # idx = track_obj_ids.index(nid)
+            # if iou_track[idx]<0.5:
+            #     if iou_track[idx]==0:
+            #         print(nid, "no overlap")
+            #     else:
+            #         print(nid, "<50% overlap")
+            # 还需加一个条件，若seg的比track的大太多，还是维持track的分割。
+            if seg_obj_area[nid] <= track_obj_area[nid]*1.5:
+                new_track_mask[nid] = seg_mask[nid]
+            else:
+                # just move location to segment?
+                print(nid, ', new seg obj too big')
+        else:
+            # print(nid, 'new')
+            new_track_mask[nid] = seg_mask[nid]
+            # new_track_mask.append(seg_mask[nid])
+    return new_track_mask
 
+def merge_st_bv__1v(param, track_mask, seg_mask):
+    """
+    track_mask: IMbind obj
+    seg_mask: same type
+    """
+    seg_obj_ids = seg_mask.get_ids()
+    seg_obj_area = ovmorph.count_obj_area(seg_mask)
+    
     track_obj_ids = track_mask.get_ids()
     track_obj_area = ovmorph.count_obj_area(track_mask)
     
