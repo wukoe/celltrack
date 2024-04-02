@@ -4,7 +4,7 @@ import pandas as pd
 from PIL import Image
 
 from wbtool import file_misc,show
-from onevision import improc,morphology,morph_proc
+from onevision import improc,morphology,morph_data
 from aot_tracker import _palette
 
 # === data process
@@ -86,15 +86,15 @@ def all2imgfile(maps, fname='', direct_write=False):
             file_misc.imwrite(os.path.join(output_dir, fname+'{}.png'.format(mi)), maps[mi])
     else:
         for mi in range(len(maps)):
-            if isinstance(maps[mi], morphology.IMbind):
-                mask = morph_proc.imbind_to_map(maps[mi])
+            if isinstance(maps[mi], morph_data.IMbind):
+                mask = morph_data.imbind_to_map(maps[mi])
             else:
                 mask = maps[mi]
             save_prediction(mask, output_dir, fname+'{}.png'.format(mi))
 
 def save_prediction(pred_mask, output_dir, file_name, opt='mask', image=None):
     if opt=='overlay':
-        ovimg = maskoverimg(image, pred_mask)
+        ovimg = maskoverimg(image, pred_mask, True)
         file_misc.imwrite(os.path.join(output_dir, file_name), ovimg)
     else:
         save_mask = Image.fromarray(pred_mask.astype(np.uint8))
@@ -109,15 +109,24 @@ def colorize_mask(pred_mask):
     save_mask = save_mask.convert(mode='RGB')
     return np.array(save_mask)
 
-def maskoverimg(vid_frame, imobj):
-    if isinstance(imobj, morphology.IMbind):
+def maskoverimg(vid_frame, imobj, show_id=False):
+    # all to masks format.
+    if isinstance(imobj, morph_data.IMbind):
         masks = [imobj[k] for k in imobj]
+        ids = imobj.get_ids()
     elif isinstance(imobj, np.ndarray) and len(imobj.shape)==2:
-        masks = morph_proc.map_to_masks(imobj)
+        masks,ids = morph_data.map_to_masks(imobj, True)
     else:
         masks = imobj
+        ids = range(1, len(imobj)+1)
 
-    return show.overlay_mask(vid_frame, masks)
+    img = show.overlay_mask(vid_frame, masks, ids)
+    if show_id:
+        mc = morphology.mass_center(masks)
+        mc = [[it[1], it[0]] for it in mc]
+        id_text = [str(it) for it in ids]
+        img = show.overlay_text(img, mc, id_text)
+    return img
 
 def overlay_all(vid, images):
     fnum = len(vid)

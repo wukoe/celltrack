@@ -2,7 +2,7 @@ import copy
 import numpy as np
 from skimage import morphology
 from onevision import morphology as ovmorph
-from onevision import morph_proc
+from onevision import morph_data
 import proc_data
 from wbtool.show import wshow
 
@@ -41,14 +41,14 @@ def do_segment(SA, segtracker_args, vid, ids, coords):
         # I = proc_data.filter_mask_by_size(ms, 0, segtracker_args['max_obj_area_ratio']) #segtracker_args['min_obj_area_ratio']
         # ms = ms[I]
         # frame_idt = frame_idt[I]
-        ms = ovmorph.IMbind(ms, 'masks', ids=frame_idt)
+        ms = morph_data.IMbind(ms, 'masks', ids=frame_idt)
         pred_mask = isolate_filter_object(ms, segtracker_args, True)        
 
         seg_list.append(pred_mask)
         print("segment for frame {}".format(frame_idx), end='\r')
 
     # 对于第一个segment map，若不遵循ids赋值，则可将ID连续分布，因为其作为tracking的起点。
-    # seg_list[0] = morph_proc.id_reset(seg_list[0])
+    # seg_list[0] = morph_data.id_reset(seg_list[0])
     print('\n-segmentation done')
     return seg_list
 
@@ -105,8 +105,8 @@ def merge_st(param, track_mask, seg_mask):
             if seg_obj_area[nid] <= track_obj_area[nid]*1.5:
                 new_track_mask[nid] = seg_mask[nid]
             else:
-                # just move location to segment?
-                print(nid, ', new seg obj too big')
+                # print(nid, ', new seg obj too big')
+                pass
         else:
             # print(nid, 'new')
             new_track_mask[nid] = seg_mask[nid]
@@ -164,17 +164,17 @@ def merge_st_bv__1v(param, track_mask, seg_mask):
         if I[id]:
             del new_track_mask[track_obj_ids[id]]
 
-    return morph_proc.imbind_to_map(new_track_mask)
+    return morph_data.imbind_to_map(new_track_mask)
 
 def merge_st_mapv(param, track_mask, seg_mask):
     """
     track_mask: a 2D id map
     seg_mask: same type
     """
-    seg_obj_mask,seg_obj_ids = morph_proc.map_to_masks(seg_mask, return_ids=True)
+    seg_obj_mask,seg_obj_ids = morph_data.map_to_masks(seg_mask, return_ids=True)
     seg_obj_area = [np.sum(it) for it in seg_obj_mask]
 
-    obj_mask,obj_ids = morph_proc.map_to_masks(track_mask, return_ids=True)
+    obj_mask,obj_ids = morph_data.map_to_masks(track_mask, return_ids=True)
     obj_area = np.array([np.sum(it) for it in obj_mask])
     
     new_track_mask = track_mask.copy()
@@ -222,3 +222,6 @@ def merge_st_mapv(param, track_mask, seg_mask):
             new_track_mask[new_track_mask==obj_ids[id]] = 0
 
     return new_track_mask
+
+def locate_missing(tms):
+    return
