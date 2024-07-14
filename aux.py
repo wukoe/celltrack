@@ -1,6 +1,6 @@
 import copy
 import numpy as np
-from skimage import morphology
+# from skimage import morphology as skmorph
 from onevision import morphology as ovmorph
 from onevision import morph_data,trajectory,improc
 import proc_data
@@ -148,7 +148,6 @@ def fix(vid, sms, SA, segtracker_args):
                         frame = vid[fi]
                         tp = sms[fi-1][cellid]
                         pp = ovmorph.mass_center([tp]) #pp is len 1 list.
-                        pp = np.array(pp)
                         Mp = SA.infer(frame, point_prompt=pp)[0]
                         # filt >>
                         Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
@@ -168,7 +167,6 @@ def fix(vid, sms, SA, segtracker_args):
                         frame = vid[fi]
                         tp = sms[fi+1][cellid]
                         pp = ovmorph.mass_center([tp]) #pp is len 1 list.
-                        pp = np.array(pp)
                         Mp = SA.infer(frame, point_prompt=pp)[0]
                         # filt >>
                         Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
@@ -237,3 +235,170 @@ def extrapolate_mask(M1, M2, return_center=False):
         return Mp, mc
     else:
         return Mp
+
+### for processing of segmented masks.
+def cell_avg_size(X:morph_data.IMbind):
+    sz = []
+    for id in X.ids:
+        a = X[id]
+        sz.append(a.sum())
+    sz = np.array(sz)
+    num,bin = np.histogram(sz, 30)
+
+    tp = seq_mine.locate_updown(num)
+
+    # 第一个下降沿和之后的第一个上升沿之间作为分界
+    first_descend = tp['descend'][0]
+    for it in tp['ascend']:
+        if it[0]>=first_descend[1]:
+            first_ascend = it
+            break
+    
+    front = bin[first_descend[1]+1]
+    tail = bin[first_ascend[0]+1]    
+    thres = (front+tail)/2
+    I = sz>=thres
+    # print(I)
+    mz = np.mean(sz[I])
+    return mz
+
+def determine_dup(e:morph_data.IMbind):
+    '''根据2个物体的mask是否有一定比例上的重叠判断是否duplicate'''
+    L = []
+    for m in range(len(e)):
+        for n in range(m+1, len(e)):
+            intersect = e[e.ids[m]] & e[e.ids[n]]
+            union = e[e.ids[m]] | e[e.ids[n]]
+            ss = intersect.sum()
+            iou = [ss/e[e.ids[m]].sum(), ss/e[e.ids[n]].sum()]
+            if max(iou) > 0.9:
+                L.append([e.ids[m], e.ids[n]])
+    
+    return L
+
+
+import skimage.segmentation as skseg
+import skimage.measure as skmeasure
+import os,math
+
+def find_correspond_dapi_file(fn, nuclear_mask_dir):
+    mark = fn.rstrip('.png').rsplit('_', 1)[1]
+    fn = fn.split('_', 1)[0] # base part
+    if mark == 'ne4c':
+        fn_nuc = fn + '_02_2_1_DAPI_001_ne4c_cp_masks.png'
+    else:
+        fn_nuc = fn + '_02_2_1_DAPI_001_cp_masks.png'
+    fn_nuc = os.path.join(nuclear_mask_dir, fn_nuc)
+    return fn_nuc, mark
+
+def detect_fake_nuc(x):
+    '''detect fake
+    Return
+    ---
+    idx : object ids from x that deemed fake.
+    '''
+    # area and perimeter of each object.
+    area = ovmorph.object_area(x)
+    area = np.array(list(area.values()))
+    peri = np.array([skmeasure.perimeter(x[it]) for it in x])
+
+    # circularity.
+    c = 4*math.pi*area/(peri**2)
+    # plt.scatter(area, c)
+    I = np.bitwise_and(c<0.75, area<200) #圆度小于0.75，面积小于200的，被定为不是细胞核。【面积的数值应该更灵活】
+
+    idx = np.nonzero(I)[0]
+    if len(idx)>0:
+        idx = np.array(x.get_ids())[idx]
+    return idx
+
+def process_according_nuclear_mask(C, K):
+    # C is cell mask map, K is nuclear mask map.
+
+    # filter nuclear mask
+    idx = detect_fake_nuc(K)
+    del K[idx]
+
+    kc = ovmorph.mass_center(K) # mass center
+    kc = kc.astype('int')
+    M = morph_data.imbind_to_map(C)
+
+    # 将obj mask分为有核和无核。
+    have_nuc = []
+    for tp in kc:
+        if M[tp[0], tp[1]] > 0:
+            have_nuc.append(M[tp[0], tp[1]]) # record the ID
+    no_nuc = set(C.ids) - set(have_nuc)
+
+    # 将无核obj合并入邻接的cell的mask，没有的则删除。
+    # - 这个过程要以多轮迭代的方法进行，因为一个mask可能其相邻的mask也是无核的，要先合并。循环直至不再有合并事件发生为止。
+    flag = True
+    while flag:
+        flag = False
+        for idx in no_nuc:
+            # whether the object contact with another object with cell nuclear.
+            for it in have_nuc:
+                if ovmorph.is_contact(C[idx], C[it]):
+                    C[it] = C[it] | C[idx] #融合到有核的细胞mask
+                    del C[idx] #删除原本无核的
+                    flag = True
+                    break
+        no_nuc = set(C.ids) - set(have_nuc)
+
+    # remove remaining:
+    for it in no_nuc:
+        del C[it]
+
+    # one more round of fill hole.
+    C = ovmorph.fill_holes(C)
+
+    # to do split
+    cell_nuc_list = get_cell_nuc_list(C, kc)
+    if cell_nuc_list is not None:
+        C = splitm(cell_nuc_list, C)
+
+    return C
+
+def get_cell_nuc_list(X, kc):
+    '''
+    确定每个细胞mask内的cell nuclear的数量。
+
+    Input
+    ---
+    X: IMbind obj of cell masks.
+    kc: list of nuclear center coordinates.
+
+    Return
+    ---
+    R: dict of cellid:list of nuclear coordinates.
+    '''
+    if len(kc) == len(X):
+        return None
+
+    M = morph_data.imbind_to_map(X)
+    R = {idx:[] for idx in X.ids}
+    for it in kc:
+        idx = M[it[0], it[1]]
+        if idx > 0:
+            R[idx].append(it)
+    return R
+
+def splitm(R, A):
+    '''
+    使用了分水岭算法，将一个细胞分成多个部分。
+    '''
+    for idx in R.keys():
+        pnum = len(R[idx])
+        if pnum>1:
+            # print(idx, R[idx])
+            marker = np.zeros(A.shape)
+            for k in range(pnum):
+                it = R[idx][k]
+                marker[it[0], it[1]] = k+1
+            tpM = skseg.watershed(A[idx], marker, mask=A[idx])
+
+            A[idx] = tpM==1 
+            for k in range(1,pnum):
+                A.append(tpM==(k+1))
+    return A
+

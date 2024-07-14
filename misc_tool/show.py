@@ -1,7 +1,10 @@
 # misc visulizations
 import os, itertools #time
 import numpy as np
-import torch
+try:
+    import torch
+except:
+    print('warning: torch not installed.')
 import cv2
 from matplotlib import pyplot as plt
 from matplotlib import patches
@@ -9,8 +12,8 @@ from PIL import Image,ImageDraw,ImageFont
 from skimage.morphology import binary 
 
 from voneum.utils import util
-import misc_tool
-from misc_tool import dm
+import wbtool
+from wbtool import dm
 
 
 # === easy show tool
@@ -147,6 +150,10 @@ font_path = os.path.join(cv2.__path__[0],'qt','fonts','DejaVuSans.ttf') #现成�
 def overlay_text(image, coords, texts, font_size=30, text_color=(255, 255, 255)):
     """
     overlay multiple texts.
+    
+    Input
+    ---
+    coords: list of coord in y-x order
     """
     image = Image.fromarray(image)# 白色
     # font=ImageFont.load_default()
@@ -155,8 +162,8 @@ def overlay_text(image, coords, texts, font_size=30, text_color=(255, 255, 255))
 
     tnum = len(texts)
     for ti in range(tnum):
-        xy = [coords[ti][0]-font_size/2, coords[ti][1]-font_size/2]
-        draw.text(xy, texts[ti], font=font, fill=text_color)
+        xy = [coords[ti][1]-font_size/2, coords[ti][0]-font_size/2]
+        draw.text(xy, texts[ti], font=font, fill=text_color) #draw.text 输入坐标规定x-y顺序。
     return np.array(image)
 
 def overlay_boxtext(img, box_info, opt='t', font_size=None):
@@ -175,7 +182,7 @@ def overlay_boxtext(img, box_info, opt='t', font_size=None):
         elif k=='t':
             show_text = True
     dynamic_fs = (font_size is None)
-    font_file = os.path.join(misc_tool.datadir, 'simsun.ttc')
+    font_file = os.path.join(wbtool.datadir, 'simsun.ttc')
     if not dynamic_fs:
         font = ImageFont.truetype(font_file, size=font_size, encoding='utf-8')
 

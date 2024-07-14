@@ -17,6 +17,29 @@ def is_monoup(x):
 def is_monodown(x):
     return all(a>=b for a,b in zip(x, x[1:]))
 
+def locate_updown(X):
+    '''
+    所有的上升、平、下降段的列表
+    '''
+    X = np.array(X)
+    P = X[1:] - X[:-1] # 后一个减前一个
+    up = locate_plateau(P>0)
+    for k in range(len(up)):
+        up[k][1] += 1
+    flat = locate_plateau(P==0)
+    for k in range(len(flat)):
+        flat[k][1] += 1
+    down = locate_plateau(P<0)
+    for k in range(len(down)):
+        down[k][1] += 1
+    return {'ascend':up, 'flat':flat, 'descend':down}
+
+def locate_minima(X):
+    return
+
+def locate_maxima(X):
+    return
+
 ### locate trend key points for binary sequence.
 def locate_plateau(X):
     """
@@ -59,6 +82,9 @@ def locate_edge(X, include_end=False):
             slen = len(X)
             down_index = np.append(down_index, slen-1)
     return {'up_edge':up_index, 'down_edge':down_index}
+
+def locate_ascend(X, include_end=False):
+    pass
 
 
 # === for text string sequence.

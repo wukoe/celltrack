@@ -80,8 +80,9 @@ def takein_folder_image(folder_path):
 
 # === output data
 def all2imgfile(maps, fname='', direct_write=False):
+    # 保存多个map
     output_dir = '/home/wb/samba_dir/indev/imouts/'
-    if direct_write:
+    if direct_write: # 不需要彩色，直接保存数值（所得图可能需要imageJ这样的软件查看）
         for mi in range(len(maps)):
             file_misc.imwrite(os.path.join(output_dir, fname+'{}.png'.format(mi)), maps[mi])
     else:
@@ -93,6 +94,11 @@ def all2imgfile(maps, fname='', direct_write=False):
             save_prediction(mask, output_dir, fname+'{}.png'.format(mi))
 
 def save_prediction(pred_mask, output_dir, file_name, opt='mask', image=None):
+    '''保存一张map的所有mask，彩色染色的mask。可以是mask或加载在图上
+    input
+    ---
+    pred_mask is a map.
+    '''
     if opt=='overlay':
         ovimg = maskoverimg(image, pred_mask, True)
         file_misc.imwrite(os.path.join(output_dir, file_name), ovimg)
@@ -109,7 +115,13 @@ def colorize_mask(pred_mask):
     save_mask = save_mask.convert(mode='RGB')
     return np.array(save_mask)
 
-def maskoverimg(vid_frame, imobj, show_id=False):
+def maskoverimg(frame, imobj, show_id=False):
+    ''' put mask over an image.
+    Input
+    ---
+    frame : must be 3 channel natural image array
+    imobj : same size as frame.
+    '''
     # all to masks format.
     if isinstance(imobj, morph_data.IMbind):
         masks = [imobj[k] for k in imobj]
@@ -120,10 +132,10 @@ def maskoverimg(vid_frame, imobj, show_id=False):
         masks = imobj
         ids = range(1, len(imobj)+1)
 
-    img = show.overlay_mask(vid_frame, masks, ids)
+    img = show.overlay_mask(frame, masks, ids)
     if show_id:
         mc = morphology.mass_center(masks)
-        mc = [[it[1], it[0]] for it in mc]
+        # mc = [[it[1], it[0]] for it in mc]
         id_text = [str(it) for it in ids]
         img = show.overlay_text(img, mc, id_text)
     return img
@@ -167,6 +179,45 @@ def overlay_all(vid, images):
 #         img_mask[countours,:] = 0
         
 #     return img_mask.astype(img.dtype)
+
+
+# 批量处理细胞核mask
+def proc_nuc_mask(nuclear_mask_dir, output_nuc_dir):
+    # output_nuc_dir = '/home/wb/samba_dir/cells_brightfield/process/e6000_segs_cyto_processed/' 
+    flist = glob.glob(os.path.join(nuclear_mask_dir, '*.png'))
+
+    for file in flist:
+        fn_nuc = os.path.basename(file)
+        print('doing ' + fn_nuc)
+        
+
+        # fn, fn_nuc, mark = aux.find_corr_dapi(fn, nuclear_mask_dir)
+        # if not os.path.isfile(fn_nuc):
+        #     print(fn_nuc, 'not found')
+        #     continue
+        
+        try:
+            K = fm.imread(file)
+        except:
+            print(file, 'loading error')
+            continue
+
+        try:
+            K = morph_data.IMbind(K, 'map')
+            # filter nuclear mask
+            idx = aux.detect_fake_nuc(K)
+            # y = copy.deepcopy(x)
+            del K[idx]
+
+            K = morph_data.imbind_to_map(K)
+            # fn_nuc = os.path.basename(fn_nuc)
+            fm.imwrite(os.path.join(output_nuc_dir, fn_nuc), K)
+        except:
+            print(fn, 'wrong')
+            continue
+            
+        print('done')
+
 
 if __name__ == "__main__":
     # folder_path = '/home/wb/samba_dir/cells_brightfield/leading-HELA-entirespan/A1ROI2_02_1_1_Bright Field'
