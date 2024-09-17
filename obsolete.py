@@ -125,3 +125,72 @@ def find_new_objs(param, track_mask, seg_mask, curr_idx):
             seg_obj_mask[seg_obj_mask==idx] = obj_num
             obj_num += 1
     return seg_obj_mask
+
+
+# === 供参考的SegTracker函数
+
+# 刘平版：
+def detect_and_seg_pt(self, origin_frame: np.ndarray, coords, modes):
+    '''
+    Using Grounding-DINO to detect object acc Text-prompts
+    Retrun:
+        refined_merged_mask: numpy array (h, w)
+        annotated_frame: numpy array (h, w, 3)
+    '''
+            # backup id and origin-merged-mask
+    bc_id = self.curr_idx
+    bc_mask = self.origin_merged_mask
+    
+    # get annotated_frame and boxes
+    # annotated_frame, boxes = self.detector.run_grounding(origin_frame, grounding_caption, box_threshold, text_threshold)
+    for i in range(len(coords)):
+        pt = coords[i].reshape([1,2])
+        mode = modes[i]
+        # if (bbox[1][0] - bbox[0][0]) * (bbox[1][1] - bbox[0][1]) > annotated_frame.shape[0] * annotated_frame.shape[1] * box_size_threshold:
+        #     continue
+        interactive_mask = self.sam.segment_with_click(origin_frame, pt, mode)
+
+        mask = interactive_mask.copy()
+        if(mask.sum(1).sum(0)/(mask.shape[0]*mask.shape[1]) < 0.01): 
+            refined_merged_mask = self.add_mask(interactive_mask)
+            self.update_origin_merged_mask(refined_merged_mask)
+            self.curr_idx += 1
+
+    # reset origin_mask
+    self.reset_origin_merged_mask(bc_mask, bc_id)
+
+    return refined_merged_mask
+
+# 最终版：
+def detect_and_seg_pt(self, frame: np.ndarray, coords, modes):
+    '''
+    Using Grounding-DINO to detect object acc Text-prompts
+    Retrun:
+        refined_merged_mask: numpy array (h, w)
+        annotated_frame: numpy array (h, w, 3)
+    '''
+    # backup id and origin-merged-mask
+    bc_id = self.curr_idx
+    bc_mask = self.origin_merged_mask
+
+    # get annotated_frame and boxes
+    # annotated_frame, boxes = self.detector.run_grounding(frame, grounding_caption, box_threshold, text_threshold)
+    cnum = len(coords)
+    imgarea = frame.shape[0]*frame.shape[1]
+    # ims = []
+    refined_merged_mask = self.add_mask(np.zeros(frame.shape[:2], dtype=np.uint8))
+    for k in range(cnum):
+        # if (bbox[1][0] - bbox[0][0]) * (bbox[1][1] - bbox[0][1]) > annotated_frame.shape[0] * annotated_frame.shape[1] * box_size_threshold:
+        #     continue
+        interactive_mask = self.sam.segment_with_click(frame, coords[k:k+1], modes[k], True)
+        # ims.append(interactive_mask.copy())
+        
+        if interactive_mask.sum(1).sum(0)/imgarea < 0.01:
+            refined_merged_mask = self.add_mask(interactive_mask)  #在self.origin_merged_mask 的基础上，根据输入修改得到返回值。
+            self.update_origin_merged_mask(refined_merged_mask)
+            self.curr_idx += 1
+
+    # reset origin_mask
+    self.reset_origin_merged_mask(bc_mask, bc_id)
+
+    return refined_merged_mask

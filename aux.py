@@ -1,6 +1,6 @@
 import copy
 import numpy as np
-# from skimage import morphology as skmorph
+from skimage import morphology as skmorph
 from onevision import morphology as ovmorph
 from onevision import morph_data,trajectory,improc
 import proc_data
@@ -99,96 +99,104 @@ def merge_st(param, track_mask, seg_mask):
             # new_track_mask.append(seg_mask[nid])
     return new_track_mask
 
-def fix(vid, sms, SA, segtracker_args):
+def fix_trace(sms, use_image=False, vid=None, SA=None, segtracker_args=None):
+    '''
+    for trace fix - 针对mask序列部分帧丢失的情况进行修复，前提：the id of each cell is already known.
+    use_image : 在补帧修复中是否使用显微原图（配合SAM进行即时分割）来得到新mask。
+    '''
     # ===
     tr = trajectory.obj_traject(sms)
-    miss_single, miss_seg = locate_missing(tr) # miss single
-    fnum = len(vid)
+    miss_single, miss_seg = locate_missing(tr) # 
+    print(miss_single)
+    print(miss_seg)
+
+    fnum = len(sms)
 
     # ===
     print('>> start single missing fix')
     print(miss_single)
     for cellid in miss_single.keys():
         for fi in miss_single[cellid]:
-            # generate segment using interpolated mask prompt.
+            # generate interpolated mask.
             M1 = sms[fi-1][cellid]
             M2 = sms[fi+1][cellid]
             M_inter = ovmorph.interpolate_object(M1, M2)
+            sms[fi][cellid] = M_inter
+            
+            # use image to further optimize.
+            if use_image: 
+                frame = vid[fi]
+                Mp = SA.infer(frame, mask_prompt=[M_inter])[0]
+                # filter
+                # tp = ovmorph.isolate_object(Mp, True, keep_one=False)
+                # if (tp!=Mp).any():
+                #     print(np.unique(tp))
+                Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio']) 
 
-            frame = vid[fi]
-            Mp = SA.infer(frame, mask_prompt=[M_inter])[0]
-            # filter
-            # tp = ovmorph.isolate_object(Mp, True, keep_one=False)
-            # if (tp!=Mp).any():
-            #     print(np.unique(tp))
-            Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
-
-            # fill-in generated mask.
-            if (Mp!=0).any():
-                sms[fi][cellid] = Mp.astype(bool)
-            else:
-                sms[fi][cellid] = M_inter
+                # fill-in generated mask.
+                if (Mp!=0).any():
+                    sms[fi][cellid] = Mp.astype(bool)                
 
     # ===
-    print('>> start gap filling')
-    print(miss_seg)
-    for cellid in miss_seg.keys():
-        for gi in range(len(miss_seg[cellid])):
-            gap = miss_seg[cellid][gi]
-            # print(gap)
-            stat = dm.copy_struct(gap)
+    if use_image:
+        print('>> start gap filling')
+        print(miss_seg)
+        for cellid in miss_seg.keys():
+            for gi in range(len(miss_seg[cellid])):
+                gap = miss_seg[cellid][gi]
+                # print(gap)
+                stat = dm.copy_struct(gap)
 
-            while True:
-                gap_o = gap.copy()
+                while True:
+                    gap_o = gap.copy()
 
-                # forward extrapolate
-                if stat[0] != 'stop':
-                    fi = gap[0]
-                    if fi-1 >= 0:
-                        frame = vid[fi]
-                        tp = sms[fi-1][cellid]
-                        pp = ovmorph.mass_center([tp]) #pp is len 1 list.
-                        Mp = SA.infer(frame, point_prompt=pp)[0]
-                        # filt >>
-                        Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
+                    # forward extrapolate
+                    if stat[0] != 'stop':
+                        fi = gap[0]
+                        if fi-1 >= 0:
+                            # 找到gap前存在mask的上一帧
+                            tp = sms[fi-1][cellid]
+                            # 以其中cell的mask重心作为seg第一帧的同cell的预估位置
+                            pp = ovmorph.mass_center([tp]) #pp is len 1 list.
+                            frame = vid[fi]
+                            Mp = SA.infer(frame, point_prompt=pp)[0]
+                            # filt >>
+                            Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
 
-                        # fill-in generated mask.
-                        if (Mp!=0).any():
-                            sms[fi][cellid] = Mp.astype(bool)
-                            gap[0] += 1
-                        else:
-                            # sms[fi-1][cellid] = M_inter
-                            stat[0] = 'stop'
+                            # fill-in generated mask.
+                            if (Mp!=0).any():
+                                sms[fi][cellid] = Mp.astype(bool)
+                                gap[0] += 1
+                            else:
+                                # sms[fi-1][cellid] = M_inter
+                                stat[0] = 'stop'
 
-                # backward extrapolate
-                if stat[1] != 'stop':
-                    fi = gap[-1]
-                    if fi+1 <= fnum-1:
-                        frame = vid[fi]
-                        tp = sms[fi+1][cellid]
-                        pp = ovmorph.mass_center([tp]) #pp is len 1 list.
-                        Mp = SA.infer(frame, point_prompt=pp)[0]
-                        # filt >>
-                        Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
+                    # backward extrapolate
+                    if stat[1] != 'stop':
+                        fi = gap[-1]
+                        if fi+1 <= fnum-1:
+                            tp = sms[fi+1][cellid]
+                            pp = ovmorph.mass_center([tp]) #pp is len 1 list.
+                            frame = vid[fi]
+                            Mp = SA.infer(frame, point_prompt=pp)[0]
+                            # filt >>
+                            Mp = ovmorph.filter_object_size(Mp, segtracker_args['min_obj_area_ratio'], segtracker_args['max_obj_area_ratio'])
 
-                        # fill-in generated mask.
-                        if (Mp!=0).any():
-                            sms[fi][cellid] = Mp.astype(bool)
-                            gap[-1] -= 1
-                        else:
-                            # sms[fi+1][cellid] = M_inter
-                            stat[1] = 'stop'
-                
-                # judge stop.
-                if gap[1]<=gap[0]:
-                    break
-                if gap == gap_o:
-                    break
+                            # fill-in generated mask.
+                            if (Mp!=0).any():
+                                sms[fi][cellid] = Mp.astype(bool)
+                                gap[-1] -= 1
+                            else:
+                                # sms[fi+1][cellid] = M_inter
+                                stat[1] = 'stop'
+                    
+                    # judge stop.
+                    if gap[1]<=gap[0]:
+                        break
+                    if gap == gap_o:
+                        break
    
     return sms
-
-def fix2(vid, sms, SA, segtracker_args):
-    return
 
     
 # ===
@@ -200,7 +208,7 @@ def locate_missing(tr):
         tr : trajectory from trajectory.obj_traject(tms)
     ---
     output
-        single_miss,seg_miss
+        single_miss, seg_miss : 单个frame中的缺失，一段frame中的缺失。
     """
     single_miss = {}
     seg_miss = {}
@@ -355,7 +363,7 @@ def process_according_nuclear_mask(C, K):
     # to do split
     cell_nuc_list = get_cell_nuc_list(C, kc)
     if cell_nuc_list is not None:
-        C = splitm(cell_nuc_list, C)
+        C = split_cell(cell_nuc_list, C)
 
     return C
 
@@ -383,7 +391,7 @@ def get_cell_nuc_list(X, kc):
             R[idx].append(it)
     return R
 
-def splitm(R, A):
+def split_cell(R, A):
     '''
     使用了分水岭算法，将一个细胞分成多个部分。
     '''
@@ -402,3 +410,80 @@ def splitm(R, A):
                 A.append(tpM==(k+1))
     return A
 
+def fix_cell_mask(C, is_do_rmdup, is_do_nuc, fn=None, nuclear_mask_dir=None):
+    ''' 优化单帧分割结果中的各个cell mask
+    C : must be IMbind obj.
+    '''
+    #=== remove small noise object, and noisy part of cell mask (each cell must be a connected shape.)
+    sz = cell_avg_size(C)
+    thres = sz/20
+    ovmorph.filter_object_size(C, thres, None, relative_size=False, in_place=True)
+    C = ovmorph.isolate_object(C, keep_one=True)
+    ovmorph.filter_object_size(C, thres, None, relative_size=False, in_place=True)
+
+    #=== fill holes
+    C = ovmorph.fill_holes(C)
+
+    #=== remove duplicates
+    if is_do_rmdup:
+        ids = C.get_ids()
+        # - 1. get convec hull of object.
+        c_fill = []
+        for k in ids:
+            c_fill.append(skmorph.convex_hull_image(C[k]))
+        # - 2. determine overlap according to convex shell, but generate new based on original mask.
+        c_fill = morph_data.IMbind(c_fill, 'masks', ids=ids)
+        L = determine_dup(c_fill)
+        for it in L:
+            # print(it)
+            union_mask = C[it[0]] | C[it[1]]
+            del C[max(it[:2])]
+            C[min(it[:2])] = union_mask
+
+    #=== merge/split masks according to nuclear mask.
+    if is_do_nuc:
+        # locate corresponding nuclear file.
+        fn_nuc, mark = find_correspond_dapi_file(fn, nuclear_mask_dir)
+        try:
+            if not os.path.isfile(fn_nuc):
+                raise Exception('nuclear file not found')
+            K = fm.imread(fn_nuc)
+            K = morph_data.IMbind(K, 'map')
+            
+            # wshow(proc_data.colorize_mask(C))
+            C = process_according_nuclear_mask(C, K)
+            # wshow(proc_data.colorize_mask(morph_data.imbind_to_map(A)))
+            
+            
+        except Exception as e:
+            print(fn, 'process error')
+            print(str(e))
+            if len(C)==0:
+                print('no cell exist after processing')
+            raise
+
+    return C
+
+def connect_id_mask(seg_series, ids, coords):
+    '''
+    针对已有人工点标注（带id）的数据，将ID信息赋予其所在的mask，并以此连接多帧上同ID的mask的轨迹。
+    '''
+    new_series = []
+    for frame_idx in range(len(seg_series)):
+        # print('frame_')
+        new_map = morph_data.IMbind([], 'masks')
+        for oi in range(len(ids[frame_idx])):
+            tp = coords[frame_idx][oi]
+            point_id = seg_series[frame_idx][tp[0], tp[1]]
+            # print(point_id)
+            if point_id > 0:
+                set_id = ids[frame_idx][oi]
+                # print(set_id)
+                if set_id in new_map:
+                    new_map[set_id] = new_map[set_id] | seg_series[frame_idx]==point_id
+                else:
+                    new_map.append(seg_series[frame_idx]==point_id, set_id)
+                # seg_series[frame_idx][seg_series[frame_idx]==point_id] = 0
+        
+        new_series.append(new_map)
+    return new_series

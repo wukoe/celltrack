@@ -253,7 +253,7 @@ def overlay_mask(image, masks, ids=None, alpha=0.8, apply_countour=False):
     else:
         ct = list(color_table.values())
         color_num = len(ct)
-        colors = [np.array(ct[ids[k]%color_num]) for k in range(n_mask)]
+        colors = [np.array(ct[int(ids[k])%color_num]) for k in range(n_mask)]
 
     im_overlay = image.copy()
     for m_id in range(n_mask):
