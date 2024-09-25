@@ -1,0 +1,6 @@
+ python infer.py --root ./data/ --model ./models/9800.pth --output ./res/ --save_vis False
+ 参数说明：
+        1. --root 数据的路径，路径下包括图片文件和pk文件（其中pk文件可存在可不存在），如果pk文件存在则基于pk文件内容处理；反之，则利用图片文件和深度网络解析结果进行处理；
+        2. --model 指定深度模型的参数路径；
+        3. --output 指定xslx文件的储存位置，如果不指定则会输出至--root指定的数据路径下
+        4. --save_vis 若为True，则将图像可视化储存在--output中，包括最小外接框和序号；默认为Fasle；
