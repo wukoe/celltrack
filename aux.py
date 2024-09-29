@@ -245,12 +245,12 @@ def extrapolate_mask(M1, M2, return_center=False):
         return Mp
 
 ### for processing of segmented masks.
-def cell_avg_size(X:morph_data.IMbind):
-    sz = []
-    for id in X.ids:
-        a = X[id]
-        sz.append(a.sum())
-    sz = np.array(sz)
+def cell_avg_size(sz):
+    '''
+    根据细胞尺寸分布的直方图来排除较小的噪声点mask，对剩下的计算平均尺寸。
+    ---
+    sz : list or np array.
+    '''
     num,bin = np.histogram(sz, 30)
 
     tp = seq_mine.locate_updown(num)
@@ -415,8 +415,10 @@ def fix_cell_mask(C, is_do_rmdup, is_do_nuc, fn=None, nuclear_mask_dir=None):
     C : must be IMbind obj.
     '''
     #=== remove small noise object, and noisy part of cell mask (each cell must be a connected shape.)
-    sz = cell_avg_size(C)
-    thres = sz/20
+    sz = [C[id].sum() for id in C.ids]
+    sz = np.array(sz)
+    asz = cell_avg_size(sz)
+    thres = asz/20
     ovmorph.filter_object_size(C, thres, None, relative_size=False, in_place=True)
     C = ovmorph.isolate_object(C, keep_one=True)
     ovmorph.filter_object_size(C, thres, None, relative_size=False, in_place=True)
