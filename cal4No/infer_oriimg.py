@@ -1,3 +1,6 @@
+'''
+this version for using only original image without mask in pickle form.
+'''
 import cv2
 import numpy as np
 import os
@@ -11,11 +14,13 @@ sys.path.append('./')
 def get_line_len(point1, point2):
     return pow(pow(point1[0] - point2[0], 2) + pow(point1[1] - point2[1], 2), 0.5)
 
-def get_obj_mfea(obj_cls, model_out):
+def get_obj(im, obj_cls, model_out, pk=False):
     # calculate the geometric features of mask.
-    h, w = model_out.shape
-
-    cls_mask = model_out.astype(np.float32)
+    h, w, _ = im.shape
+    if not pk:
+        cls_mask = (model_out == obj_cls).astype(np.float32)
+    else:
+        cls_mask = model_out.astype(np.float32)
     # 定义结构元素
     kernel = np.ones((3, 3), np.uint8)
 
@@ -131,18 +136,39 @@ if __name__ == "__main__":
     # 添加参数
     parser.add_argument('--root', help='处理参数的路径')
     parser.add_argument('--output', help='输出文件的路径', default=None)
+    parser.add_argument('--model', help='模型路径', default='models/9800.pth')
     parser.add_argument('--save_vis', help='是否保存可视化图像', default=False)
     args = parser.parse_args()
-
     img_root =  args.root
     
+    if False:
+        import torch
+        from torchvision import transforms
+        from model import *
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print('device:', device)
+
+        # 加载模型，映射到指定设备
+        print(args.model)
+        netm = torch.load(args.model, map_location=device)  # the model output is 12 dim vector?
+        # 匹配的输入转换
+        transform = transforms.Compose([
+                transforms.ToTensor(),          # 将图像转换为PyTorch张量
+                # transforms.Resize((768, 768)),
+                transforms.Normalize(           # 归一化图像
+                    mean=[0.485, 0.456, 0.406],  # ImageNet数据集的均值
+                    std=[0.229, 0.224, 0.225]   # ImageNet数据集的标准差
+                ),
+        ])
+
+
     if args.output is None:
         args.output = args.root
 
     if not os.path.exists(args.output):
         os.makedirs(args.output)
 
-    # get all .pk files.
     imgs = os.listdir(img_root)
     name_start = imgs[0].split('_')[0]
     im_indexes = [int(item.split('.')[0].split('_')[-1]) for item in imgs]
@@ -161,32 +187,24 @@ if __name__ == "__main__":
     
     # 
     print(imgs)
-    # print(save_names)
+    print(save_names)
     for img_name, save_name in zip(imgs, save_names):
-        # print(img_name)
-        # if 'png' not in img_name and 'jpg' not in img_name:
-        if '.pk' not in img_name:
+        if 'png' not in img_name and 'jpg' not in img_name:
             continue
+        ori_img = cv2.imread(os.path.join(img_root, img_name))
         
-        img_name = os.path.join(img_root, img_name)
-        if os.path.isfile(img_name):
-            pk_item = pickle.load(open(img_name, 'rb'))
+        pk_name = os.path.join(img_root, img_name.replace('png', 'pk').replace('jpg', 'pk'))
+        if os.path.isfile(pk_name):
+            pk_item = pickle.load(open(pk_name, 'rb'))
             objs = []
             for pk_key in pk_item:
-                objs.extend(get_obj_mfea(pk_key, pk_item[pk_key]))
-
+                objs.extend(get_obj(ori_img, pk_key, pk_item[pk_key], True))
 
             for obj_id, obj in enumerate(objs):
                 obj_dict[obj['cls_id']] = obj
             res_obj_dict = obj_dict
-            
-            save_to_xslx(res_obj_dict, os.path.join(os.path.join(args.output, save_name)))
 
             if args.save_vis:
-                # find image file
-                tp = os.path.join(img_root, img_name.replace('pk', 'png').replace('pk', 'jpg'))
-                ori_img = cv2.imread(os.path.join(img_root, tp))
-
                 for index in res_obj_dict:
                     obj = res_obj_dict[index]
                     box = obj['最小外接矩形']
@@ -199,4 +217,79 @@ if __name__ == "__main__":
 
                     cv2.putText(ori_img, str(index), box[0], cv2.FONT_HERSHEY_SIMPLEX , 1, (0, 255, 0), 2, cv2.LINE_AA)
                 
-                cv2.imwrite(os.path.join(args.output, save_name + '_vis.png'), ori_img)
+                cv2.imwrite(os.path.join(os.path.join(args.output, img_name + '_vis.png')), ori_img)
+            
+            save_to_xslx(res_obj_dict, os.path.join(os.path.join(args.output, save_name)))
+            continue # if pk file found, no further action (including CV model processing)
+
+
+        img = transform(ori_img).to(device)
+        model_output = netm(img.unsqueeze(0))[0].argmax(0).cpu().numpy()
+
+        objs = []
+        for cls_id in range(14):
+            objs.extend(get_obj(ori_img, cls_id, model_output))
+  
+        #初始化序号
+        if len(obj_dict) == 0:
+            for obj_id, obj in enumerate(objs):
+                obj_dict[obj_id] = obj
+            res_obj_dict = obj_dict
+        else: #已经存在序号，需进行匹配
+            res_obj_dict = {}
+            match_dises = {}
+            new_objs= []
+            for obj in objs:
+                dises = []
+                indexes = []
+                for obj_index in obj_dict:
+                    obj_item = obj_dict[obj_index]
+                    if obj['cls_id'] != obj_item['cls_id']:
+                        continue
+                    dis = get_dis(obj['最小外接矩形'], obj_item['最小外接矩形'])
+                    dises.append(dis)
+                    indexes.append(obj_index)
+                if min(dises) <= 100:
+                    selected_index = indexes[dises.index(min(dises))]
+                    if selected_index not in res_obj_dict:
+                        res_obj_dict[selected_index] = obj
+                        match_dises[selected_index] = min(dises)
+                    else:
+                        if match_dises[selected_index] < min(dises):
+                            new_objs.append(obj)
+                        else:
+                            new_objs.append(res_obj_dict[selected_index])
+                            res_obj_dict[selected_index] = obj
+                else:
+                    new_objs.append(obj)
+            if len(new_objs) > 0:
+                max_index = max(list(res_obj_dict.keys()))
+                for obj in new_objs:
+                    res_obj_dict[max_index + 1] = obj
+                    max_index += 1
+            obj_dict.update(res_obj_dict)
+
+        # print(res_obj_dict)
+
+
+        # res_obj_dict = obj_dict
+        if args.save_vis:
+            for index in res_obj_dict:
+                obj = res_obj_dict[index]
+                box = obj['最小外接矩形']
+
+                cv2.line(ori_img, box[0], box[1], (255, 0, 0), 1)
+                cv2.line(ori_img, box[1], box[2], (255, 0, 0), 1)
+                cv2.line(ori_img, box[2], box[3], (255, 0, 0), 1)
+                cv2.line(ori_img, box[3], box[0], (255, 0, 0), 1)
+
+                cv2.putText(ori_img, str(index), box[0], cv2.FONT_HERSHEY_SIMPLEX , 1, (0, 255, 0), 2, cv2.LINE_AA)
+            
+
+
+        
+            cv2.imwrite(os.path.join(os.path.join(args.output, img_name + '_vis.png')), ori_img)
+        
+        save_to_xslx(res_obj_dict, os.path.join(os.path.join(args.output, save_name)))
+
+    # 
