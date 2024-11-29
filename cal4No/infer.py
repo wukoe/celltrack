@@ -1,6 +1,6 @@
+import os,glob
 import cv2
 import numpy as np
-import os
 import pickle
 import pandas as pd
 
@@ -143,60 +143,51 @@ if __name__ == "__main__":
         os.makedirs(args.output)
 
     # get all .pk files.
-    imgs = os.listdir(img_root)
-    name_start = imgs[0].split('_')[0]
-    im_indexes = [int(item.split('.')[0].split('_')[-1]) for item in imgs]
+    imgs = glob.glob(os.path.join(img_root, '*.pk'))
+    # print(imgs[0])
+    im_indexes = [int(item.rsplit('.', 1)[0].rsplit('_', 1)[-1]) for item in imgs]
+    print(im_indexes)
 
-    imgs = [x for _, x in sorted(zip(im_indexes, imgs))]
-
-    im_indexes.sort()
-
-    if im_indexes[0] == 0:
-        save_names = [name_start + '_' + str(index + 1) + '.xlsx' for index in im_indexes]
-    else:
-        save_names = [name_start + '_' + str(index) + '.xlsx' for index in im_indexes]
-        
-    obj_dict = {}
-
+    flag_NameStartFromZero = min(im_indexes)==0
+    # print(flag_StartFromZero)
     
-    # 
-    print(imgs)
-    # print(save_names)
-    for img_name, save_name in zip(imgs, save_names):
+    for img_name in imgs:
         # print(img_name)
-        # if 'png' not in img_name and 'jpg' not in img_name:
-        if '.pk' not in img_name:
-            continue
+        pk_item = pickle.load(open(img_name, 'rb'))
+
+        objs = []
+        for obj_id in pk_item:
+            objs.extend(get_obj_mfea(obj_id, pk_item[obj_id]))
+
+        res_obj_dict = {}
+        for obj in objs:
+            res_obj_dict[obj['cls_id']] = obj
+
+        # output file name
+        im_index = int(img_name.rsplit('.', 1)[0].rsplit('_', 1)[-1])
+        save_name = os.path.basename(img_name).split('_', 1)[0] + '_' 
+        if flag_NameStartFromZero:
+            save_name = save_name + str(im_index + 1) + '.xlsx'
+        else:
+            save_name = save_name + str(im_index) + '.xlsx'
+        # print(save_name)
         
-        img_name = os.path.join(img_root, img_name)
-        if os.path.isfile(img_name):
-            pk_item = pickle.load(open(img_name, 'rb'))
-            objs = []
-            for pk_key in pk_item:
-                objs.extend(get_obj_mfea(pk_key, pk_item[pk_key]))
+        save_to_xslx(res_obj_dict, os.path.join(os.path.join(args.output, save_name)))
 
+        if args.save_vis:
+            # find image file
+            tp = os.path.join(img_root, img_name.replace('pk', 'png').replace('pk', 'jpg'))
+            ori_img = cv2.imread(os.path.join(img_root, tp))
 
-            for obj_id, obj in enumerate(objs):
-                obj_dict[obj['cls_id']] = obj
-            res_obj_dict = obj_dict
+            for index in res_obj_dict:
+                obj = res_obj_dict[index]
+                box = obj['最小外接矩形']
             
-            save_to_xslx(res_obj_dict, os.path.join(os.path.join(args.output, save_name)))
+                cv2.line(ori_img, box[0], box[1], (255, 0, 0), 1)
+                cv2.line(ori_img, box[1], box[2], (255, 0, 0), 1)
+                cv2.line(ori_img, box[2], box[3], (255, 0, 0), 1)
+                cv2.line(ori_img, box[3], box[0], (255, 0, 0), 1)
 
-            if args.save_vis:
-                # find image file
-                tp = os.path.join(img_root, img_name.replace('pk', 'png').replace('pk', 'jpg'))
-                ori_img = cv2.imread(os.path.join(img_root, tp))
-
-                for index in res_obj_dict:
-                    obj = res_obj_dict[index]
-                    box = obj['最小外接矩形']
-
-                
-                    cv2.line(ori_img, box[0], box[1], (255, 0, 0), 1)
-                    cv2.line(ori_img, box[1], box[2], (255, 0, 0), 1)
-                    cv2.line(ori_img, box[2], box[3], (255, 0, 0), 1)
-                    cv2.line(ori_img, box[3], box[0], (255, 0, 0), 1)
-
-                    cv2.putText(ori_img, str(index), box[0], cv2.FONT_HERSHEY_SIMPLEX , 1, (0, 255, 0), 2, cv2.LINE_AA)
-                
-                cv2.imwrite(os.path.join(args.output, save_name + '_vis.png'), ori_img)
+                cv2.putText(ori_img, str(index), box[0], cv2.FONT_HERSHEY_SIMPLEX , 1, (0, 255, 0), 2, cv2.LINE_AA)
+            
+            cv2.imwrite(os.path.join(args.output, save_name + '_vis.png'), ori_img)
